@@ -1,0 +1,31 @@
+Here are some things on my to-do list, in no particular order:
+
+ * Automatically switch to a larger block size to reduce the overhead for files
+   that rarely change after being created (like >= 100MB video files :-)
+
+ * Implement the fsync(datasync) API method?
+   if datasync:
+    only flush user data (file contents)
+   else:
+    flush user & meta data (file contents & attributes)
+
+ * Implement rename() independently of [un]link() to improve performance?
+
+ * Implement --verify-reads option that recalculates hashes when reading to
+   check for data block corruption?
+
+ * report_disk_usage() has become way too expensive for regular status
+   reports because it takes more than a minute on a 7.0 GB database. The only
+   way it might work was if the statistics are only retrieved from the database
+   once and from then on kept up to date inside Python, but that seems like an
+   awful lot of work. For now I've just removed the call to report_disk_usage()
+   from print_stats() and added a --print-stats command-line option that just
+   reports the disk usage and then exits.
+
+ * Related to the previous point, maybe it's worth considering switching to the
+   dbm module for storing data blocks, to avoid the sqlite3.Binary() overhead?
+   This would reduce the size of the SQLite database to the point where the
+   full metadata store might fit in memory / cache, and that would
+   significantly improve the performance of the file system.
+
+ * Use named tuple for Stat() objects because getattr() tops profile listings?
