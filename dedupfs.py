@@ -53,12 +53,7 @@ def main(): # {{{1
   mount points. Execute "dedupfs -h" for a list of valid command-line options.
   """
 
-  # Set the Python FUSE API version that this script was written against.
-  fuse.fuse_python_api = (0, 2)
-
   dfs = DedupFS()
-  dfs.flags = 0
-  dfs.multithreaded = 0
 
   # A short usage message with the command-line options defined by dedupfs
   # itself (see the __init__() method of the DedupFS class) is automatically
@@ -94,8 +89,15 @@ class DedupFS(fuse.Fuse): # {{{1
 
     try:
 
+      # Set the Python FUSE API version.
+      fuse.fuse_python_api = (0, 2)
+
       # Initialize the FUSE binding's internal state.
       fuse.Fuse.__init__(self, *args, **kw)
+
+      # Set some options required by the Python FUSE binding.
+      self.flags = 0
+      self.multithreaded = 0
 
       # Initialize instance attributes.
       self.block_size = 1024 * 128
