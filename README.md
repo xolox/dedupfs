@@ -37,18 +37,17 @@ too slow.
 ==============
 
 This script requires the Python FUSE binding in addition to several Python
-standard libraries like sqlite3, hashlib and cStringIO.
+standard libraries like `sqlite3`, `hashlib` and `cStringIO`.
 
  CONTACT
 =========
 
 If you have questions, bug reports, suggestions, etc. the author can be
-contacted at peter@peterodding.com. The latest version of DedupFS is available
-at http://peterodding.com/code/dedupfs and http://github.com/xolox/dedupfs.
+contacted at <peter@peterodding.com>. The latest version of DedupFS is
+available at <http://peterodding.com/code/dedupfs> and <http://github.com/xolox/dedupfs>.
 
  LICENSE
 =========
 
 DedupFS is licensed under the MIT license.
-
 Copyright 2010 Peter Odding <peter@peterodding.com>.
