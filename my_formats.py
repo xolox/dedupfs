@@ -1,3 +1,5 @@
+from math import floor
+
 def format_timespan(seconds): # {{{1
   """
   Format a timespan in seconds as a human-readable string.
