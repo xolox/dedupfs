@@ -28,4 +28,7 @@ Here are some things on my to-do list, in no particular order:
    full metadata store might fit in memory / cache, and that would
    significantly improve the performance of the file system.
 
+ * Tag databases with a version number and implement automatic upgrades because
+   I've grown tired of upgrading my database by hand :-)
+
  * Use named tuple for Stat() objects because getattr() tops profile listings?
