@@ -22,13 +22,13 @@ Copyright 2010 Peter Odding <peter@peterodding.com>.
 # Imports. {{{1
 
 # Standard libraries.
+import collections
 import cStringIO
 import errno
 import hashlib
 import logging
 import math
 import os
-import pwd, grp
 import sqlite3
 import stat
 import sys
@@ -303,21 +303,25 @@ class DedupFS(fuse.Fuse): # {{{1
     try:
       #self.__log_call('getattr', 'getattr(%r)', path)
       inode = self.__path2keys(path)[1]
-      query = 'SELECT * FROM inodes WHERE inode = ?'
+      query = 'SELECT inode, nlinks, mode, uid, gid, rdev, size, atime, mtime, ctime FROM inodes WHERE inode = ?'
       attrs = self.conn.execute(query, (inode,)).fetchone()
-      return Stat(st_ino     = attrs['inode'],
-                  st_nlink   = attrs['nlinks'],
-                  st_mode    = attrs['mode'],
-                  st_uid     = attrs['uid'],
-                  st_gid     = attrs['gid'],
-                  st_rdev    = attrs['rdev'],
-                  st_size    = attrs['size'],
-                  st_atime   = attrs['atime'],
-                  st_mtime   = attrs['mtime'],
-                  st_ctime   = attrs['ctime'],
-                  st_blksize = self.block_size,
-                  st_blocks  = attrs['size'] / 512)
+      result = Stat(st_ino     = attrs[0],
+                    st_nlink   = attrs[1],
+                    st_mode    = attrs[2],
+                    st_uid     = attrs[3],
+                    st_gid     = attrs[4],
+                    st_rdev    = attrs[5],
+                    st_size    = attrs[6],
+                    st_atime   = attrs[7],
+                    st_mtime   = attrs[8],
+                    st_ctime   = attrs[9],
+                    st_blksize = self.block_size,
+                    st_blocks  = attrs[6] / 512,
+                    st_dev     = 0)
+      self.logger.debug("getattr() returning %s", result)
+      return result
     except Exception, e:
+      self.logger.debug("getattr() returning ENOENT")
       return self.__except_to_status('getattr', e, errno.ENOENT)
 
   def link(self, target_path, link_path, nested=False): # {{{3
@@ -496,33 +500,16 @@ class DedupFS(fuse.Fuse): # {{{1
       #self.__log_call('statfs', 'statfs()')
       # Use os.statvfs() to report the host file system's storage capacity.
       host_fs = os.statvfs(self.data_file)
-      result = StatVFS()
-      # The file system block size in bytes.
-      result.f_bsize = self.block_size
-      # The fundamental file system block size in bytes.
-      result.f_frsize = self.block_size
-      # The total number of blocks in the file system in terms of f_frsize.
-      result.f_blocks = (host_fs.f_frsize * host_fs.f_blocks) / self.block_size
-      # The total number of free blocks in the file system.
-      result.f_bfree = (host_fs.f_frsize * host_fs.f_bfree) / self.block_size
-      # The total number of free blocks available to a non-privileged process.
-      result.f_bavail = (host_fs.f_bsize * host_fs.f_bavail) / self.block_size
-      # The total number of file serial numbers.
-      result.f_files = 0
-      # The total number of free file serial numbers.
-      result.f_ffree = 0
-      # The number of free file serial numbers available to a non-privileged process.
-      result.f_favail = 0
-      # File system flags. Symbols are defined in the <sys/statvfs.h> header
-      # file to refer to bits in this field (see The f_flags field).
-      result.f_flag = 0
-      # The maximum file name length in the file system. Some file systems may
-      # return the maximum value that can be stored in an unsigned long to
-      # indicate the file system has no maximum file name length. The maximum
-      # value that can be stored in an unsigned long is defined in <limits.h>
-      # as ULONG_MAX.
-      result.f_namemax = 4294967295
-      return result
+      return StatVFS(f_bavail  = (host_fs.f_bsize * host_fs.f_bavail) / self.block_size, # The total number of free blocks available to a non-privileged process.
+                     f_bfree   = (host_fs.f_frsize * host_fs.f_bfree) / self.block_size, # The total number of free blocks in the file system.
+                     f_blocks  = (host_fs.f_frsize * host_fs.f_blocks) / self.block_size, # The total number of blocks in the file system in terms of f_frsize.
+                     f_bsize   = self.block_size, # The file system block size in bytes.
+                     f_favail  = 0, # The number of free file serial numbers available to a non-privileged process.
+                     f_ffree   = 0, # The total number of free file serial numbers.
+                     f_files   = 0, # The total number of file serial numbers.
+                     f_flag    = 0, # File system flags. Symbols are defined in the <sys/statvfs.h> header file to refer to bits in this field (see The f_flags field).
+                     f_frsize  = self.block_size, # The fundamental file system block size in bytes.
+                     f_namemax = 4294967295) # The maximum file name length in the file system. Some file systems may return the maximum value that can be stored in an unsigned long to indicate the file system has no maximum file name length. The maximum value that can be stored in an unsigned long is defined in <limits.h> as ULONG_MAX.
     except Exception, e:
       return self.__except_to_status('statfs', e, errno.EIO)
 
@@ -1092,56 +1079,14 @@ class Buffer: # {{{1
     self.dirty = True
     return self.buf.write(*args)
 
-class Stat: # {{{1
+# Named tuples used to return complex objects to FUSE. {{{1
 
-  """
-  This class is a replacement for fuse.Stat that supports pretty printing.
-  """
+Stat = collections.namedtuple('Stat', 'st_atime st_blksize st_blocks \
+    st_ctime st_dev st_gid st_ino st_mode st_mtime st_nlink st_rdev \
+    st_size st_uid')
 
-  def __init__(self, **kw):
-    self.st_dev = 0
-    self.st_rdev = 0
-    self.st_blksize = 0
-    self.st_blocks = 0
-    for k in kw:
-       setattr(self, k, kw[k])
-
-  def __str__(self):
-    attrs = []
-    for key in 'ino', 'mode', 'uid', 'gid', 'size', 'nlink', 'atime', 'mtime', 'ctime':
-      value = getattr(self, 'st_' + key)
-      if key == 'size':
-        value = format_size(value)
-      elif key == 'mode':
-        value = oct(value)
-      elif key == 'uid':
-        try: value = pwd.getpwuid(value).pw_name
-        except Exception: pass
-      elif key == 'gid':
-        try: value = grp.getgrgid(value).gr_name
-        except Exception: pass
-      elif key in ('atime', 'mtime', 'ctime'):
-        value = '%x' % int(value)
-      attrs.append('%s=%s' % (key, value))
-    return 'Stat(%s)' % ', '.join(attrs)
-
-class StatVFS: # {{{1
-
-  """
-  This class is a replacement for fuse.StatVFS that supports pretty printing.
-  """
-
-  def __init__(self, **kw):
-    for k in kw:
-       setattr(self, k, kw[k])
-
-  def __str__(self):
-    attrs = []
-    sizes = ('bsize', 'frsize')
-    for key in 'bsize', 'frsize', 'blocks', 'bfree', 'bavail', 'files', 'ffree', 'favail', 'flag', 'namemax':
-      value = getattr(self, 'f_' + key)
-      attrs.append('%s=%s' % (key, value))
-    return 'StatVFS(%s)' % ', '.join(attrs)
+StatVFS = collections.namedtuple('StatVFS', 'f_bavail f_bfree f_blocks \
+    f_bsize f_favail f_ffree f_files f_flag f_frsize f_namemax')
 
 # }}}1
 
