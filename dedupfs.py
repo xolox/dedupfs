@@ -401,7 +401,7 @@ class DedupFS(fuse.Fuse): # {{{1
       self.bytes_read += len(data)
       return data
     except Exception, e:
-      return self.__except_to_status('read', e, errno=errno.EIO)
+      return self.__except_to_status('read', e, code=errno.EIO)
 
   def readdir(self, path, offset): # {{{3
     # Bug fix: When you use the -o use_ino option, directory entries must have
