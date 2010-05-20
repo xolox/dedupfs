@@ -40,7 +40,7 @@ try:
   import fuse
 except ImportError:
   sys.stderr.write("Fatal error: The Python FUSE binding isn't installed!\n" + \
-      "If you're on Ubuntu try running  `sudo apt-get install python-fuse'.\n")
+      "If you're on Ubuntu try running `sudo apt-get install python-fuse'.\n")
   sys.exit(1)
 
 # Local modules that are mostly useful for debugging.
@@ -157,19 +157,17 @@ class DedupFS(fuse.Fuse): # {{{1
             self.compressors[modname] = (module.compress, module.decompress)
             compression_methods.append(modname)
         except ImportError:
-          pass # Ignore missing modules.
+          pass
       msg = "enable compression of data blocks using one of the supported compression methods: one of %s" + option_stored_in_db
       msg %= ', '.join('%r' % mth for mth in compression_methods[1:])
       self.parser.add_option('--compress', dest='compression_method', metavar='METHOD', type='choice', choices=compression_methods, default='none', help=msg)
 
       # Dynamically check for profiling support.
       try:
-        # I'm using the __import__() function here instead of the import
-        # keyword to prevent pyflakes' "module imported but unused" messages.
+        # Using __import__() here because of pyflakes.
         for p in 'cProfile', 'pstats': __import__(p)
         self.parser.add_option('--profile', action='store_true', default=False, help="use the Python modules cProfile and pstats to create a profile of time spent in various function calls and print out a table of the slowest functions at exit (of course this slows everything down but it can nevertheless give a good indication of the hot spots)")
       except ImportError:
-        # Ignore missing modules.
         self.logger.warning("No profiling support available, --profile option disabled.")
         self.logger.warning("If you're on Ubuntu try `sudo apt-get install python-profiler'.")
 
@@ -177,7 +175,7 @@ class DedupFS(fuse.Fuse): # {{{1
       self.__except_to_status('__init__', e)
       sys.exit(1)
 
-    # FUSE API implementation: {{{2
+  # FUSE API implementation: {{{2
 
   def access(self, path, flags): # {{{3
     try:
@@ -669,7 +667,8 @@ class DedupFS(fuse.Fuse): # {{{1
       INSERT INTO options (name, value) VALUES ('compression_method', %r);
       INSERT INTO options (name, value) VALUES ('hash_function', %r);
 
-    """ % (self.root_mode, uid, gid, t, t, t, self.synchronous and 1 or 0, self.block_size, self.compression_method, self.hash_function))
+    """ % (self.root_mode, uid, gid, t, t, t, self.synchronous and 1 or 0,
+           self.block_size, self.compression_method, self.hash_function))
     self.conn.commit()
 
   def __get_opts_from_db(self, options): # {{{3
@@ -1033,6 +1032,7 @@ class DedupFS(fuse.Fuse): # {{{1
     return self.conn.execute(query, values).fetchone()[0]
 
   def __except_to_status(self, method, exception, code=errno.ENOENT): # {{{3
+    # Don't report ENOENT raised from getattr().
     if method != 'getattr' or code != errno.ENOENT:
       sys.stderr.write('%s\n' % ('-' * 50))
       sys.stderr.write("Caught exception in %s(): %s\n" % (method, exception))
@@ -1040,6 +1040,7 @@ class DedupFS(fuse.Fuse): # {{{1
       sys.stderr.write('%s\n' % ('-' * 50))
       sys.stderr.write("Returning %i\n" % -code)
       sys.stderr.flush()
+    # Convert the exception to a FUSE error code.
     if isinstance(exception, OSError):
       return -exception.errno
     else:
