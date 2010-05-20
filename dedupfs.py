@@ -1099,8 +1099,7 @@ if __name__ == '__main__':
     cProfile.run('main()', profile)
     sys.stderr.write("\n Profiling statistics:\n\n")
     s = pstats.Stats(profile)
-    s.strip_dirs()
-    s.sort_stats('cumulative')
+    s.sort_stats('time')
     s.print_stats(0.10)
     os.unlink(profile)
   else:
