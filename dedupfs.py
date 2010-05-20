@@ -24,6 +24,7 @@ Copyright 2010 Peter Odding <peter@peterodding.com>.
 # Standard libraries.
 import collections
 import cStringIO
+import dbm
 import errno
 import hashlib
 import logging
@@ -61,10 +62,10 @@ def main(): # {{{1
   fuse_opts = dfs.parse(['-o', 'use_ino,default_permissions,fsname=dedupfs'] + sys.argv[1:])
 
   dfs_opts = dfs.cmdline[0]
-  dfs.data_file = os.path.expanduser(dfs_opts.database)
   if dfs_opts.print_stats:
+    dfs.metastore_file = os.path.expanduser(dfs_opts.metastore)
     dfs.init_logging(dfs_opts)
-    first_use = dfs.setup_database_connection()
+    first_use = dfs.setup_database_connections()
     if not first_use:
       dfs.report_disk_usage()
 
@@ -79,9 +80,6 @@ def main(): # {{{1
     # because this listing includes the 20+ options defined by the Python FUSE
     # binding (which is kind of intimidating at first).
     dfs.main()
-
-__NODE_KEY_VALUE = 0
-__NODE_KEY_LAST_USED = 1
 
 class DedupFS(fuse.Fuse): # {{{1
 
@@ -109,17 +107,20 @@ class DedupFS(fuse.Fuse): # {{{1
       self.cache_timeout = 60 # seconds
       self.cached_nodes = {}
       self.calls_log_filter = []
-      self.data_file = 'dedupfs.sqlite3'
+      self.datastore_file = '~/.dedupfs-datastore.db'
       self.gc_enabled = True
       self.gc_hook_last_run = time.time()
       self.gc_interval = 60
       self.link_mode = stat.S_IFLNK | 0777
       self.memory_usage = 0
+      self.metastore_file = '~/.dedupfs-metastore.sqlite3'
       self.opcount = 0
       self.read_only = False
       self.root_mode = stat.S_IFDIR | 0755
       self.time_spent_reading = 0
       self.time_spent_writing = 0
+      self.__NODE_KEY_VALUE = 0
+      self.__NODE_KEY_LAST_USED = 1
 
       # Initialize a Logger() object to handle logging.
       self.logger = logging.getLogger('dedupfs')
@@ -131,9 +132,10 @@ class DedupFS(fuse.Fuse): # {{{1
       self.parser.set_conflict_handler('resolve') # enable overriding the --help message.
       self.parser.add_option('-h', '--help', action='help', help="show this help message followed by the command-line options defined by the Python FUSE binding and exit")
       self.parser.add_option('-v', '--verbose', action='count', dest='verbosity', default=0, help="increase verbosity")
-      self.parser.add_option('--print-stats', dest='print_stats', action='store_true', default=False, help="print the total apparent size and the actual disk usage of the file system and exit.")
+      self.parser.add_option('--print-stats', dest='print_stats', action='store_true', default=False, help="print the total apparent size and the actual disk usage of the file system and exit")
       self.parser.add_option('--log-file', dest='log_file', help="specify log file location")
-      self.parser.add_option('--database', dest='database', metavar='FILE', default=self.data_file, help="specify database location")
+      self.parser.add_option('--metastore', dest='metastore', metavar='FILE', default=self.metastore_file, help="specify the location of the file in which metadata is stored")
+      self.parser.add_option('--datastore', dest='datastore', metavar='FILE', default=self.datastore_file, help="specify the location of the file in which data blocks are stored")
       self.parser.add_option('--block-size', dest='block_size', metavar='BYTES', default=self.block_size, type='int', help="specify the maximum block size in bytes" + option_stored_in_db)
       self.parser.add_option('--no-transactions', dest='use_transactions', action='store_false', default=True, help="don't use transactions when making multiple related changes, this might make the file system faster or slower (?)")
       self.parser.add_option('--nosync', dest='synchronous', action='store_false', default=True, help="disable SQLite's normal synchronous behavior which guarantees that data is written to disk immediately, because it slows down the file system too much (this means you might lose data when the mount point isn't cleanly unmounted)")
@@ -231,12 +233,13 @@ class DedupFS(fuse.Fuse): # {{{1
   def fsdestroy(self): # {{{3
     try:
       #self.__log_call('fsdestroy', 'fsdestroy()')
-      self.logger.info("Committing outstanding changes to `%s'.", self.data_file)
+      self.logger.info("Committing outstanding changes to `%s'.", self.metastore_file)
       self.__collect_garbage()
       self.__print_stats()
       if not self.read_only:
         self.conn.commit()
       self.conn.close()
+      self.blocks.close()
       return 0
     except Exception, e:
       return self.__except_to_status('fsdestroy', e, errno.EIO)
@@ -247,29 +250,19 @@ class DedupFS(fuse.Fuse): # {{{1
       options = self.cmdline[0]
       self.block_size = options.block_size
       self.compression_method = options.compression_method
-      self.data_file = os.path.expanduser(options.database)
+      self.datastore_file = self.__check_data_file(options.datastore)
       self.gc_enabled = options.gc_enabled
       self.hash_function = options.hash_function
+      self.metastore_file = self.__check_data_file(options.metastore)
       self.synchronous = options.synchronous
       self.use_transactions = options.use_transactions
       self.verify_writes = options.verify_writes
-      if os.access(self.data_file, os.F_OK):
-        # Bug fix: If the database already exists make sure its readable,
-        # because otherwise the file system would be completely unusable.
-        if not os.access(self.data_file, os.R_OK):
-          self.logger.critical("Error: Database file %r exists but isn't readable!", self.data_file)
-          sys.exit(1)
-        # Bug fix: Check whether the database is writable (e.g. when the database
-        # has been created by root but is currently accessed by another user).
-        if not os.access(self.data_file, os.W_OK):
-          self.logger.warning("Warning: Database file %r exists but isn't writable!", self.data_file)
-          self.read_only = True
         # Initialize the logging and database subsystems.
       self.init_logging(options)
       #self.__log_call('fsinit', 'fsinit()')
-      first_use = self.setup_database_connection()
+      first_use = self.setup_database_connections()
       if first_use:
-        self.__init_db_structures()
+        self.init_metastore()
       else:
         self.__get_opts_from_db(options)
       # Make sure the hash function is (still) valid (since the database was created).
@@ -497,7 +490,7 @@ class DedupFS(fuse.Fuse): # {{{1
     try:
       #self.__log_call('statfs', 'statfs()')
       # Use os.statvfs() to report the host file system's storage capacity.
-      host_fs = os.statvfs(self.data_file)
+      host_fs = os.statvfs(self.metastore_file)
       return StatVFS(f_bavail  = (host_fs.f_bsize * host_fs.f_bavail) / self.block_size, # The total number of free blocks available to a non-privileged process.
                      f_bfree   = (host_fs.f_frsize * host_fs.f_bfree) / self.block_size, # The total number of free blocks in the file system.
                      f_blocks  = (host_fs.f_frsize * host_fs.f_blocks) / self.block_size, # The total number of blocks in the file system in terms of f_frsize.
@@ -608,29 +601,7 @@ class DedupFS(fuse.Fuse): # {{{1
       else:
         self.logger.setLevel(logging.NOTSET)
 
-  def setup_database_connection(self): # {{{3
-    self.logger.info("Using database file %r.", self.data_file)
-    first_use = not os.path.exists(self.data_file)
-    # Open a database connection with manual transaction management.
-    self.conn = sqlite3.connect(self.data_file, isolation_level=None)
-    # Use the built-in row factory to enable named attributes.
-    self.conn.row_factory = sqlite3.Row
-    # Return regular strings instead of Unicode objects.
-    self.conn.text_factory = str
-    # Don't bother releasing any locks since there's currently no point in
-    # having concurrent reading/writing of the file system database.
-    self.conn.execute('PRAGMA locking_mode = EXCLUSIVE')
-    return first_use
-
-  def __log_call(self, fun, msg, *args): # {{{3
-    # To disable all __log_call() invocations:
-    #  :%s/^\(\s\+\)\(self\.__log_call\)/\1#\2
-    # To re-enable them:
-    #  :%s/^\(\s\+\)#\(self\.__log_call\)/\1\2
-    if fun in self.calls_log_filter:
-      self.logger.debug(msg, *args)
-
-  def __init_db_structures(self): # {{{3
+  def init_metastore(self): # {{{3
     self.logger.info("Initializing database structures.")
     # Bug fix: At this point fuse.FuseGetContext() returns uid = 0 and gid = 0
     # which differs from the info returned in later calls. The simple fix is to
@@ -644,8 +615,8 @@ class DedupFS(fuse.Fuse): # {{{1
       CREATE TABLE tree (id INTEGER PRIMARY KEY, parent_id INTEGER, name TEXT NOT NULL, inode INTEGER NOT NULL);
       CREATE TABLE inodes (inode INTEGER PRIMARY KEY, nlinks INTEGER NOT NULL, mode INTEGER NOT NULL, uid INTEGER, gid INTEGER, rdev INTEGER, size INTEGER, atime INTEGER, mtime INTEGER, ctime INTEGER);
       CREATE TABLE links (inode INTEGER, target TEXT NOT NULL, PRIMARY KEY(inode, target));
-      CREATE TABLE blocks (id INTEGER PRIMARY KEY, hash CHAR(40) NOT NULL UNIQUE, value BINARY NOT NULL);
-      CREATE TABLE "index" (inode INTEGER, block_id INTEGER, block_nr INTEGER, PRIMARY KEY (inode, block_id, block_nr));
+      CREATE TABLE hashes (id INTEGER PRIMARY KEY, hash CHAR(40) NOT NULL UNIQUE);
+      CREATE TABLE "index" (inode INTEGER, hash_id INTEGER, block_nr INTEGER, PRIMARY KEY (inode, hash_id, block_nr));
       CREATE TABLE options (name TEXT PRIMARY KEY, value TEXT NOT NULL);
 
       -- Create indices on the most-frequently used keys. Note that an implicit
@@ -654,7 +625,6 @@ class DedupFS(fuse.Fuse): # {{{1
       CREATE INDEX tree_inodes ON tree (inode);
       CREATE INDEX inodes_sizes ON inodes (inode, size);
       CREATE UNIQUE INDEX tree_parents_names ON tree (parent_id, name);
-      CREATE UNIQUE INDEX blocks_hashes ON blocks (hash);
 
       -- Create the root node of the file system.
       INSERT INTO tree (id, parent_id, name, inode) VALUES (1, NULL, '', 1);
@@ -670,6 +640,48 @@ class DedupFS(fuse.Fuse): # {{{1
     """ % (self.root_mode, uid, gid, t, t, t, self.synchronous and 1 or 0,
            self.block_size, self.compression_method, self.hash_function))
     self.conn.commit()
+
+  def setup_database_connections(self): # {{{3
+    self.logger.info("Using data files %r and %r.", self.metastore_file, self.datastore_file)
+    first_use = not (os.path.exists(self.metastore_file) and os.path.exists(self.datastore_file))
+    # Open the Berkeley database file.
+    pathname = self.datastore_file
+    # Strip the .db suffix so the dbm module can add it back :-)
+    if pathname.endswith('.db'): pathname = pathname[0:-3]
+    self.blocks = dbm.open(pathname, 'c')
+    # Open an SQLite database connection with manual transaction management.
+    self.conn = sqlite3.connect(self.metastore_file, isolation_level=None)
+    # Use the built-in row factory to enable named attributes.
+    self.conn.row_factory = sqlite3.Row
+    # Return regular strings instead of Unicode objects.
+    self.conn.text_factory = str
+    # Don't bother releasing any locks since there's currently no point in
+    # having concurrent reading/writing of the file system database.
+    self.conn.execute('PRAGMA locking_mode = EXCLUSIVE')
+    return first_use
+
+  def __check_data_file(self, pathname): # {{{3
+    pathname = os.path.expanduser(pathname)
+    if os.access(pathname, os.F_OK):
+      # Bug fix: If the datafile already exists make sure its readable,
+      # because otherwise the file system would be completely unusable.
+      if not os.access(pathname, os.R_OK):
+        self.logger.critical("Error: Datafile %r exists but isn't readable!", pathname)
+        sys.exit(1)
+      # Bug fix: Check whether the datafile is writable (e.g. when the datafile
+      # has been created by root but is currently accessed by another user).
+      if not os.access(pathname, os.W_OK):
+        self.logger.warning("Warning: Database file %r exists but isn't writable!", pathname)
+        self.read_only = True
+    return pathname
+
+  def __log_call(self, fun, msg, *args): # {{{3
+    # To disable all __log_call() invocations:
+    #  :%s/^\(\s\+\)\(self\.__log_call\)/\1#\2
+    # To re-enable them:
+    #  :%s/^\(\s\+\)#\(self\.__log_call\)/\1\2
+    if self.calls_log_filter == [] or fun in self.calls_log_filter:
+      self.logger.debug(msg, *args)
 
   def __get_opts_from_db(self, options): # {{{3
     for name, value in self.conn.execute('SELECT name, value FROM options'):
@@ -715,11 +727,11 @@ class DedupFS(fuse.Fuse): # {{{1
       buf.seek(self.block_size * block_nr, os.SEEK_SET)
       new_block = buf.read(self.block_size)
       digest = self.__hash(new_block)
-      select_query = 'SELECT id, hash, value FROM blocks WHERE hash = ?'
+      select_query = 'SELECT id FROM hashes WHERE hash = ?'
       row = self.conn.execute(select_query, (digest,)).fetchone()
       if row:
-        block_id, existing_hash, existing_block = row
-        existing_block = self.decompress(str(existing_block))
+        hash_id = row[0]
+        existing_block = self.decompress(self.blocks[digest])
         # Check for hash collisions.
         if new_block != existing_block:
           # Found a hash collision: dump debugging info and exit.
@@ -729,21 +741,18 @@ class DedupFS(fuse.Fuse): # {{{1
           handle.write('Content of new block is %r.\n' % new_block)
           handle.close()
           self.logger.critical(
-              "Found a hash collision on block id %i of inode %i!\n" + \
+              "Found a hash collision on block number %i of inode %i!\n" + \
               "The existing block is %i bytes and hashes to %s.\n"   + \
               "The new block is %i bytes and hashes to %s.\n"        + \
               "Saved existing and conflicting data blocks to %r.",
-              block_id, inode, len(existing_block), existing_hash,
+              block_nr, inode, len(existing_block), digest,
               len(new_block), digest, dumpfile_collision)
-          if self.__hash(existing_block) != existing_hash:
-            self.logger.critical("Hint: The existing block and its hash don't match!")
           sys.exit(1)
-        self.conn.execute('INSERT INTO "index" (inode, block_id, block_nr) VALUES (?, ?, ?)', (inode, block_id, block_nr))
+        self.conn.execute('INSERT INTO "index" (inode, hash_id, block_nr) VALUES (?, ?, ?)', (inode, hash_id, block_nr))
       else:
-        # Store the new data block in the database.
-        encoded_block = sqlite3.Binary(self.compress(new_block))
-        self.conn.execute('INSERT INTO blocks (hash, value) VALUES (?, ?)', (digest, encoded_block))
-        self.conn.execute('INSERT INTO "index" (inode, block_id, block_nr) VALUES (?, last_insert_rowid(), ?)', (inode, block_nr))
+        self.blocks[digest] = self.compress(new_block)
+        self.conn.execute('INSERT INTO hashes (hash) VALUES (?)', (digest,))
+        self.conn.execute('INSERT INTO "index" (inode, hash_id, block_nr) VALUES (?, last_insert_rowid(), ?)', (inode, block_nr))
         # Check that the data was properly stored in the database?
         self.__verify_write(new_block, digest, block_nr, inode)
       block_nr += 1
@@ -830,8 +839,8 @@ class DedupFS(fuse.Fuse): # {{{1
         # This node has already been cached: Update its last used time and
         # continue with resolving the next node.
         node = node[segment]
-        node[__NODE_KEY_LAST_USED] = time_now
-        node_id, inode = node[__NODE_KEY_VALUE]
+        node[self.__NODE_KEY_LAST_USED] = time_now
+        node_id, inode = node[self.__NODE_KEY_VALUE]
         parent_id = node_id
         if uncached_segments == []:
           self.__cache_check_gc()
@@ -845,7 +854,7 @@ class DedupFS(fuse.Fuse): # {{{1
           raise OSError, (errno.ENOENT, os.strerror(errno.ENOENT), path)
         else:
           node_id, inode = result
-          new_node = { __NODE_KEY_VALUE: (node_id, inode), __NODE_KEY_LAST_USED: time_now }
+          new_node = { self.__NODE_KEY_VALUE: (node_id, inode), self.__NODE_KEY_LAST_USED: time_now }
           node[segment] = new_node
           node = new_node
           parent_id = node_id
@@ -864,19 +873,19 @@ class DedupFS(fuse.Fuse): # {{{1
       # Resolve the next path segment.
       node = node[segment]
       # Update the last used time of the sub path.
-      node[__NODE_KEY_LAST_USED] = time_now
+      node[self.__NODE_KEY_LAST_USED] = time_now
     if not value:
       # Delete the path's keys.
       if last_segment in node:
         del node[last_segment]
     elif last_segment not in node:
       # Create the path's keys.
-      node[last_segment] = { __NODE_KEY_VALUE: value, __NODE_KEY_LAST_USED: time_now }
+      node[last_segment] = { self.__NODE_KEY_VALUE: value, self.__NODE_KEY_LAST_USED: time_now }
     else:
       # Update the path's keys.
       node = node[last_segment]
-      node[__NODE_KEY_VALUE] = value
-      node[__NODE_KEY_LAST_USED] = time_now
+      node[self.__NODE_KEY_VALUE] = value
+      node[self.__NODE_KEY_LAST_USED] = time_now
     self.__cache_check_gc()
     return True
 
@@ -894,7 +903,7 @@ class DedupFS(fuse.Fuse): # {{{1
     for key in node.keys():
       child = node[key]
       if isinstance(child, dict):
-        last_used = time_now - child[__NODE_KEY_LAST_USED]
+        last_used = time_now - child[self.__NODE_KEY_LAST_USED]
         if last_used > self.cache_timeout:
           del node[key]
         else:
@@ -959,10 +968,10 @@ class DedupFS(fuse.Fuse): # {{{1
     query = """
       SELECT * FROM (
         SELECT *, COUNT(*) AS "count" FROM "index"
-        GROUP BY block_id ORDER BY "count" DESC
-      ), blocks WHERE
+        GROUP BY hash_id ORDER BY "count" DESC
+      ), hashes WHERE
         "count" > 1 AND
-        block_id = blocks.id
+        hash_id = hashes.id
         LIMIT 10 """
     if self.logger.isEnabledFor(logging.DEBUG):
       printed_header = False
@@ -978,7 +987,7 @@ class DedupFS(fuse.Fuse): # {{{1
         else:
           preview = preview[0 : max_length] + '...'
         nbytes = format_size(len(row['value']))
-        self.logger.debug(msg, row['block_id'], nbytes, row['count'], preview)
+        self.logger.debug(msg, row['hash_id'], nbytes, row['count'], preview)
 
   def __gc_hook(self, nested=False): # {{{3
     # Don't collect any garbage for nested calls.
@@ -995,11 +1004,24 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def __collect_garbage(self): # {{{3
     if self.gc_enabled and not self.read_only:
+
       start_time = time.time()
       self.logger.info("Performing garbage collection (this might take a while) ..")
+
+      sub_start_time = time.time()
       self.conn.execute('DELETE FROM inodes WHERE nlinks = 0')
+      self.logger.info("Cleaned up unused inodes in %s.", format_timespan(time.time() - sub_start_time))
+
+      sub_start_time = time.time()
       self.conn.execute('DELETE FROM "index" WHERE inode NOT IN (SELECT inode FROM inodes)')
-      self.conn.execute('DELETE FROM blocks WHERE id NOT IN (SELECT block_id FROM "index")')
+      self.logger.info("Cleaned up unused index entries in %s.", format_timespan(time.time() - sub_start_time))
+
+      sub_start_time = time.time()
+      for row in self.execute('SELECT hash FROM hashes WHERE id NOT IN (SELECT hash_id FROM "index")'):
+        del self.blocks[row[0]]
+      self.conn.execute('DELETE FROM hashes WHERE id NOT IN (SELECT hash_id FROM "index")')
+      self.logger.info("Cleaned up unused data blocks in %s.", format_timespan(time.time() - sub_start_time))
+
       elapsed_time = time.time() - start_time
       self.logger.info("Finished garbage collection in %s.", format_timespan(elapsed_time))
 
@@ -1018,13 +1040,15 @@ class DedupFS(fuse.Fuse): # {{{1
     else:
       buf = Buffer()
       inode = self.__path2keys(path)[1]
-      query = """ SELECT b.value FROM blocks AS b, "index" AS i
-            WHERE i.inode = ? AND i.block_id = b.id
-            ORDER BY i.block_nr ASC """
+      query = """ SELECT h.hash FROM hashes h, "index" i
+                  WHERE i.inode = ? AND h.id = i.hash_id
+                  ORDER BY i.block_nr ASC """
       for row in self.conn.execute(query, (inode,)).fetchall():
-        # Convert the buffer object used to return a BINARY value into
-        # a Python string and transparently decompress compressed data.
-        buf.write(self.decompress(str(row[0])))
+        digest = row[0]
+        # TODO Make the file system more robust against failure by doing
+        # something sensible when self.blocks.has_key(digest) is false.
+        block = self.blocks[digest]
+        buf.write(self.decompress(block))
       self.buffers[path] = buf
       return buf
 
