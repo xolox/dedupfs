@@ -1020,7 +1020,7 @@ class DedupFS(fuse.Fuse): # {{{1
       self.logger.info("Cleaned up unused index entries in %s.", format_timespan(time.time() - sub_start_time))
 
       sub_start_time = time.time()
-      for row in self.execute('SELECT hash FROM hashes WHERE id NOT IN (SELECT hash_id FROM "index")'):
+      for row in self.conn.execute('SELECT hash FROM hashes WHERE id NOT IN (SELECT hash_id FROM "index")'):
         del self.blocks[row[0]]
       self.conn.execute('DELETE FROM hashes WHERE id NOT IN (SELECT hash_id FROM "index")')
       self.logger.info("Cleaned up unused data blocks in %s.", format_timespan(time.time() - sub_start_time))
