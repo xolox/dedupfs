@@ -821,11 +821,11 @@ class DedupFS(fuse.Fuse): # {{{1
   def __path2keys(self, path): # {{{3
     # Start the traversal at the file system's known root node.
     node_id, inode = 1, 1
+    # Handle requests for the keys of the file system's root.
+    if path == '/':
+      return node_id, inode
     # Split the pathname into a list of non-empty path segments.
     uncached_segments = self.__split_segments(path)
-    # Handle requests for the keys of the file system's root.
-    if uncached_segments == []:
-      return node_id, inode
     # Check whether the full pathname has already been cached or find
     # the largest prefix that's already been cached and is still valid.
     cached_segments = []
