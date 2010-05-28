@@ -104,7 +104,7 @@ class DedupFS(fuse.Fuse): # {{{1
       self.bytes_written = 0
       self.cache_gc_last_run = time.time()
       self.cache_requests = 0
-      self.cache_timeout = 60 # seconds
+      self.cache_timeout = 60 # TODO Make this a command-line option!
       self.cached_nodes = {}
       self.calls_log_filter = []
       self.datastore_file = '~/.dedupfs-datastore.db'
@@ -767,6 +767,8 @@ class DedupFS(fuse.Fuse): # {{{1
     uid, gid = self.__getctx()
     self.conn.execute('INSERT INTO inodes (nlinks, mode, uid, gid, rdev, size, atime, mtime, ctime) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', (nlinks, mode, uid, gid, rdev, size, t, t, t))
     inode = self.__fetchval('SELECT last_insert_rowid()')
+    # TODO Optional support for path segment interning? (my current database
+    # contains 514.90 MB worth of strings while only 5.06 MB is unique...)
     self.conn.execute('INSERT INTO tree (parent_id, name, inode) VALUES (?, ?, ?)', (parent_id, name, inode))
     node_id = self.__fetchval('SELECT last_insert_rowid()')
     self.__cache_set(path, (node_id, inode))
@@ -847,6 +849,7 @@ class DedupFS(fuse.Fuse): # {{{1
           return node_id, inode
       else:
         # This node hasn't been cached yet, fetch it from the database.
+        # TODO Would the file system perform better when whole directories are fetched here at once?!
         query = 'SELECT id, inode FROM tree WHERE parent_id = ? AND name = ?'
         result = self.conn.execute(query, (parent_id, segment)).fetchone()
         if result == None:
