@@ -65,9 +65,8 @@ def main(): # {{{1
   if dfs_opts.print_stats:
     dfs.metastore_file = os.path.expanduser(dfs_opts.metastore)
     dfs.init_logging(dfs_opts)
-    first_use = dfs.setup_database_connections()
-    if not first_use:
-      dfs.report_disk_usage()
+    dfs.setup_database_connections()
+    dfs.report_disk_usage()
 
   # If the user didn't pass -h or --help and also didn't supply a mount point
   # as a positional argument, print th short usage message and exit (I don't
@@ -257,14 +256,12 @@ class DedupFS(fuse.Fuse): # {{{1
       self.synchronous = options.synchronous
       self.use_transactions = options.use_transactions
       self.verify_writes = options.verify_writes
-        # Initialize the logging and database subsystems.
+      # Initialize the logging and database subsystems.
       self.init_logging(options)
       #self.__log_call('fsinit', 'fsinit()')
-      first_use = self.setup_database_connections()
-      if first_use:
-        self.init_metastore()
-      else:
-        self.__get_opts_from_db(options)
+      self.setup_database_connections()
+      self.init_metastore()
+      self.__get_opts_from_db(options)
       # Make sure the hash function is (still) valid (since the database was created).
       if not hasattr(hashlib, self.hash_function):
         self.logger.critical("Error: The selected hash function %r doesn't exist!", self.hash_function)
@@ -281,7 +278,6 @@ class DedupFS(fuse.Fuse): # {{{1
       # configured block size that was used to create the database (see the
       # set_block_size() call).
       self.__select_compress_method(options)
-      self.logger.info("Finished file system initialization.")
       return 0
     except Exception, e:
       self.__except_to_status('fsinit', e, errno.EIO)
@@ -602,7 +598,6 @@ class DedupFS(fuse.Fuse): # {{{1
         self.logger.setLevel(logging.NOTSET)
 
   def init_metastore(self): # {{{3
-    self.logger.info("Initializing database structures.")
     # Bug fix: At this point fuse.FuseGetContext() returns uid = 0 and gid = 0
     # which differs from the info returned in later calls. The simple fix is to
     # use Python's os.getuid() and os.getgid() library functions instead of
@@ -611,39 +606,36 @@ class DedupFS(fuse.Fuse): # {{{1
     t = self.__newctime()
     self.conn.executescript("""
 
-      -- Create the required tables.
-      CREATE TABLE tree (id INTEGER PRIMARY KEY, parent_id INTEGER, name TEXT NOT NULL, inode INTEGER NOT NULL);
-      CREATE TABLE inodes (inode INTEGER PRIMARY KEY, nlinks INTEGER NOT NULL, mode INTEGER NOT NULL, uid INTEGER, gid INTEGER, rdev INTEGER, size INTEGER, atime INTEGER, mtime INTEGER, ctime INTEGER);
-      CREATE TABLE links (inode INTEGER, target TEXT NOT NULL, PRIMARY KEY(inode, target));
-      CREATE TABLE hashes (id INTEGER PRIMARY KEY, hash CHAR(40) NOT NULL UNIQUE);
-      CREATE TABLE "index" (inode INTEGER, hash_id INTEGER, block_nr INTEGER, PRIMARY KEY (inode, hash_id, block_nr));
-      CREATE TABLE options (name TEXT PRIMARY KEY, value TEXT NOT NULL);
+      -- Create the required tables?
+      CREATE TABLE IF NOT EXISTS tree (id INTEGER PRIMARY KEY, parent_id INTEGER, name TEXT NOT NULL, inode INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS inodes (inode INTEGER PRIMARY KEY, nlinks INTEGER NOT NULL, mode INTEGER NOT NULL, uid INTEGER, gid INTEGER, rdev INTEGER, size INTEGER, atime INTEGER, mtime INTEGER, ctime INTEGER);
+      CREATE TABLE IF NOT EXISTS links (inode INTEGER, target TEXT NOT NULL, PRIMARY KEY(inode, target));
+      CREATE TABLE IF NOT EXISTS hashes (id INTEGER PRIMARY KEY, hash CHAR(40) NOT NULL UNIQUE);
+      CREATE TABLE IF NOT EXISTS "index" (inode INTEGER, hash_id INTEGER, block_nr INTEGER, PRIMARY KEY (inode, hash_id, block_nr));
+      CREATE TABLE IF NOT EXISTS options (name TEXT PRIMARY KEY, value TEXT NOT NULL);
 
-      -- Create indices on the most-frequently used keys. Note that an implicit
+      -- Create indices on the most-frequently used keys? Note that an implicit
       -- index has already been created on links.hash because it's UNIQUE.
-      CREATE INDEX tree_parents ON tree (parent_id);
-      CREATE INDEX tree_inodes ON tree (inode);
-      CREATE INDEX inodes_sizes ON inodes (inode, size);
-      CREATE UNIQUE INDEX tree_parents_names ON tree (parent_id, name);
+      CREATE INDEX IF NOT EXISTS tree_parents ON tree (parent_id);
+      CREATE INDEX IF NOT EXISTS tree_inodes ON tree (inode);
+      CREATE INDEX IF NOT EXISTS inodes_sizes ON inodes (inode, size);
+      CREATE UNIQUE INDEX IF NOT EXISTS tree_parents_names ON tree (parent_id, name);
 
-      -- Create the root node of the file system.
-      INSERT INTO tree (id, parent_id, name, inode) VALUES (1, NULL, '', 1);
-      INSERT INTO inodes (nlinks, mode, uid, gid, rdev,   size, atime, mtime, ctime)
-                  VALUES (     2,   %i,  %i,  %i,    0, 1024*4,    %f,    %f,    %f);
+      -- Create the root node of the file system?
+      INSERT OR IGNORE INTO tree (id, parent_id, name, inode) VALUES (1, NULL, '', 1);
+      INSERT OR IGNORE INTO inodes (nlinks, mode, uid, gid, rdev, size, atime, mtime, ctime) VALUES (2, %i, %i, %i, 0, 1024*4, %f, %f, %f);
 
-      -- Save the relevant command-line options that were used to initialize the database.
-      INSERT INTO options (name, value) VALUES ('synchronous', %i);
-      INSERT INTO options (name, value) VALUES ('block_size', %i);
-      INSERT INTO options (name, value) VALUES ('compression_method', %r);
-      INSERT INTO options (name, value) VALUES ('hash_function', %r);
+      -- Save the command-line options used to initialize the database?
+      INSERT OR IGNORE INTO options (name, value) VALUES ('synchronous', %i);
+      INSERT OR IGNORE INTO options (name, value) VALUES ('block_size', %i);
+      INSERT OR IGNORE INTO options (name, value) VALUES ('compression_method', %r);
+      INSERT OR IGNORE INTO options (name, value) VALUES ('hash_function', %r);
 
     """ % (self.root_mode, uid, gid, t, t, t, self.synchronous and 1 or 0,
            self.block_size, self.compression_method, self.hash_function))
-    self.conn.commit()
 
   def setup_database_connections(self): # {{{3
     self.logger.info("Using data files %r and %r.", self.metastore_file, self.datastore_file)
-    first_use = not (os.path.exists(self.metastore_file) and os.path.exists(self.datastore_file))
     # Open the Berkeley database file.
     pathname = self.datastore_file
     # Strip the .db suffix so the dbm module can add it back :-)
@@ -658,7 +650,6 @@ class DedupFS(fuse.Fuse): # {{{1
     # Don't bother releasing any locks since there's currently no point in
     # having concurrent reading/writing of the file system database.
     self.conn.execute('PRAGMA locking_mode = EXCLUSIVE')
-    return first_use
 
   def __check_data_file(self, pathname): # {{{3
     pathname = os.path.expanduser(pathname)
