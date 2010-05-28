@@ -211,9 +211,9 @@ class DedupFS(fuse.Fuse): # {{{1
     except Exception, e:
       return self.__except_to_status('chown', e, errno.EIO)
 
-  def create(self, path, mode, flags): # {{{3
+  def create(self, path, flags, mode): # {{{3
     try:
-      #self.__log_call('create', 'create(%r, %o, %o)', path, mode, flags)
+      #self.__log_call('create', 'create(%r, %o, %o)', path, flags, mode)
       if self.read_only: return -errno.EROFS
       try:
         # If the file already exists, just open it.
