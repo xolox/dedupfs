@@ -324,7 +324,8 @@ class DedupFS(fuse.Fuse): # {{{1
       target_ino = self.__path2keys(target_path)[1]
       link_parent, link_name = os.path.split(link_path)
       link_parent_id, link_parent_ino = self.__path2keys(link_parent)
-      self.conn.execute('INSERT INTO tree (parent_id, name, inode) VALUES (?, ?, ?)', (link_parent_id, link_name, target_ino))
+      string_id = self.__intern(link_name)
+      self.conn.execute('INSERT INTO tree (parent_id, name, inode) VALUES (?, ?, ?)', (link_parent_id, string_id, target_ino))
       node_id = self.__fetchval('SELECT last_insert_rowid()')
       self.conn.execute('UPDATE inodes SET nlinks = nlinks + 1 WHERE inode = ?', (target_ino,))
       if self.__fetchval('SELECT mode FROM inodes where inode = ?', target_ino) & stat.S_IFDIR:
@@ -400,11 +401,9 @@ class DedupFS(fuse.Fuse): # {{{1
       node_id, inode = self.__path2keys(path)
       yield fuse.Direntry('.', ino=inode)
       yield fuse.Direntry('..')
-      query = "SELECT inode, name FROM tree WHERE parent_id = ?"
+      query = "SELECT t.inode, s.value FROM tree t, strings s WHERE t.parent_id = ? AND t.name = s.id"
       for inode, name in self.conn.execute(query, (node_id,)).fetchall():
-        # Bug fix: SQLite returns Unicode strings but FUSE ignores them.
-        # Guess how long it took me to find that out :-(
-        yield fuse.Direntry(name, ino=inode)
+        yield fuse.Direntry(str(name), ino=inode)
     except Exception, e:
       self.__except_to_status('readdir', e)
 
@@ -608,22 +607,17 @@ class DedupFS(fuse.Fuse): # {{{1
     self.conn.executescript("""
 
       -- Create the required tables?
-      CREATE TABLE IF NOT EXISTS tree (id INTEGER PRIMARY KEY, parent_id INTEGER, name TEXT NOT NULL, inode INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS tree (id INTEGER PRIMARY KEY, parent_id INTEGER, name INTEGER NOT NULL, inode INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS strings (id INTEGER PRIMARY KEY, value BLOB NOT NULL);
       CREATE TABLE IF NOT EXISTS inodes (inode INTEGER PRIMARY KEY, nlinks INTEGER NOT NULL, mode INTEGER NOT NULL, uid INTEGER, gid INTEGER, rdev INTEGER, size INTEGER, atime INTEGER, mtime INTEGER, ctime INTEGER);
       CREATE TABLE IF NOT EXISTS links (inode INTEGER, target TEXT NOT NULL, PRIMARY KEY(inode, target));
       CREATE TABLE IF NOT EXISTS hashes (id INTEGER PRIMARY KEY, hash CHAR(40) NOT NULL UNIQUE);
       CREATE TABLE IF NOT EXISTS "index" (inode INTEGER, hash_id INTEGER, block_nr INTEGER, PRIMARY KEY (inode, hash_id, block_nr));
       CREATE TABLE IF NOT EXISTS options (name TEXT PRIMARY KEY, value TEXT NOT NULL);
 
-      -- Create indices on the most-frequently used keys? Note that an implicit
-      -- index has already been created on links.hash because it's UNIQUE.
-      CREATE INDEX IF NOT EXISTS tree_parents ON tree (parent_id);
-      CREATE INDEX IF NOT EXISTS tree_inodes ON tree (inode);
-      CREATE INDEX IF NOT EXISTS inodes_sizes ON inodes (inode, size);
-      CREATE UNIQUE INDEX IF NOT EXISTS tree_parents_names ON tree (parent_id, name);
-
       -- Create the root node of the file system?
-      INSERT OR IGNORE INTO tree (id, parent_id, name, inode) VALUES (1, NULL, '', 1);
+      INSERT OR IGNORE INTO strings (id, value) VALUES (1, '');
+      INSERT OR IGNORE INTO tree (id, parent_id, name, inode) VALUES (1, NULL, 1, 1);
       INSERT OR IGNORE INTO inodes (nlinks, mode, uid, gid, rdev, size, atime, mtime, ctime) VALUES (2, %i, %i, %i, 0, 1024*4, %f, %f, %f);
 
       -- Save the command-line options used to initialize the database?
@@ -761,15 +755,26 @@ class DedupFS(fuse.Fuse): # {{{1
     inode = self.__fetchval('SELECT last_insert_rowid()')
     # TODO Optional support for path segment interning? (my current database
     # contains 514.90 MB worth of strings while only 5.06 MB is unique...)
-    self.conn.execute('INSERT INTO tree (parent_id, name, inode) VALUES (?, ?, ?)', (parent_id, name, inode))
+    string_id = self.__intern(name)
+    self.conn.execute('INSERT INTO tree (parent_id, name, inode) VALUES (?, ?, ?)', (parent_id, string_id, inode))
     node_id = self.__fetchval('SELECT last_insert_rowid()')
     self.__cache_set(path, (node_id, inode))
     return inode, parent_inode
 
+  def __intern(self, string): # {{{3
+    args = (sqlite3.Binary(string),)
+    result = self.conn.execute('SELECT id FROM strings WHERE value = ?', args).fetchone()
+    if not result:
+      self.conn.execute('INSERT INTO strings (id, value) VALUES (NULL, ?)', args)
+      result = self.conn.execute('SELECT last_insert_rowid()').fetchone()
+    return int(result[0])
+
   def __remove(self, path, check_empty=False): # {{{3
     node_id, inode = self.__path2keys(path)
     # Make sure directories are empty before deleting them to avoid orphaned inodes.
-    if check_empty and self.__fetchval('SELECT COUNT(*) FROM tree WHERE parent_id = ?', node_id) > 0:
+    query = """ SELECT COUNT(t.id) FROM tree t, inodes i WHERE
+                t.parent_id = ? AND i.inode = t.inode AND i.nlinks > 0 """
+    if check_empty and self.__fetchval(query, node_id) > 0:
       raise OSError, (errno.ENOTEMPTY, os.strerror(errno.ENOTEMPTY), path)
     self.__cache_set(path, None)
     self.conn.execute('DELETE FROM tree WHERE id = ?', (node_id,))
@@ -845,7 +850,7 @@ class DedupFS(fuse.Fuse): # {{{1
       else:
         # This node hasn't been cached yet, fetch it from the database.
         # TODO Would the file system perform better when whole directories are fetched here at once?!
-        query = 'SELECT id, inode FROM tree WHERE parent_id = ? AND name = ?'
+        query = 'SELECT t.id, t.inode FROM tree t, strings s WHERE t.parent_id = ? AND s.value = ?'
         result = self.conn.execute(query, (parent_id, segment)).fetchone()
         if result == None:
           self.__cache_check_gc()
@@ -1005,6 +1010,12 @@ class DedupFS(fuse.Fuse): # {{{1
 
       start_time = time.time()
       self.logger.info("Performing garbage collection (this might take a while) ..")
+
+      sub_start_time = time.time()
+      self.conn.execute('DELETE FROM strings WHERE id NOT IN (SELECT name FROM tree)')
+      elapsed_time = time.time() - sub_start_time
+      if elapsed_time > 1:
+        self.logger.info("Cleaned up unused strings in %s.", format_timespan(elapsed_time))
 
       sub_start_time = time.time()
       self.conn.execute('DELETE FROM inodes WHERE nlinks = 0')
