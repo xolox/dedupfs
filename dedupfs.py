@@ -453,8 +453,9 @@ class DedupFS(fuse.Fuse): # {{{1
       self.__log_call('rename', 'rename(%r -> %r)', old_path, new_path)
       if self.read_only: return -errno.EROFS
       # Try to remove the existing target path (if if exists).
+      # NB: This also makes sure target directories are empty.
       try:
-        self.unlink(new_path, nested=True)
+        self.__remove(new_path, check_empty=True)
       except OSError, e:
         # Ignore errno.ENOENT, re-raise other exceptions.
         if e.errno != errno.ENOENT: raise
