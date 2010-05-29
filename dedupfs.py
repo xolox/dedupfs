@@ -323,10 +323,12 @@ class DedupFS(fuse.Fuse): # {{{1
       if self.read_only: return -errno.EROFS
       target_ino = self.__path2keys(target_path)[1]
       link_parent, link_name = os.path.split(link_path)
-      link_parent_id = self.__path2keys(link_parent)[0]
+      link_parent_id, link_parent_ino = self.__path2keys(link_parent)
       self.conn.execute('INSERT INTO tree (parent_id, name, inode) VALUES (?, ?, ?)', (link_parent_id, link_name, target_ino))
       node_id = self.__fetchval('SELECT last_insert_rowid()')
       self.conn.execute('UPDATE inodes SET nlinks = nlinks + 1 WHERE inode = ?', (target_ino,))
+      if self.__fetchval('SELECT mode FROM inodes where inode = ?', target_ino) & stat.S_IFDIR:
+        self.conn.execute('UPDATE inodes SET nlinks = nlinks + 1 WHERE inode = ?', (link_parent_ino,))
       self.__cache_set(link_path, (node_id, target_ino))
       self.__commit_changes(nested)
       self.__gc_hook(nested)
@@ -475,8 +477,6 @@ class DedupFS(fuse.Fuse): # {{{1
       self.__log_call('rmdir', 'rmdir(%r)', path)
       if self.read_only: return -errno.EROFS
       self.__remove(path, check_empty=True)
-      parent_id, parent_inode = self.__path2keys(os.path.split(path)[0])
-      self.conn.execute('UPDATE inodes SET nlinks = nlinks - 1 WHERE inode = ?', (parent_inode,))
       self.__commit_changes()
       return 0
     except Exception, e:
@@ -776,6 +776,9 @@ class DedupFS(fuse.Fuse): # {{{1
     self.conn.execute('UPDATE inodes SET nlinks = nlinks - 1 WHERE inode = ?', (inode,))
     # Inodes with nlinks = 0 are purged periodically from __collect_garbage() so
     # we don't have to do that here.
+    if self.__fetchval('SELECT mode FROM inodes where inode = ?', inode) & stat.S_IFDIR:
+      parent_id, parent_ino = self.__path2keys(os.path.split(path)[0])
+      self.conn.execute('UPDATE inodes SET nlinks = nlinks - 1 WHERE inode = ?', (parent_ino,))
 
   def __verify_write(self, block, digest, block_nr, inode): # {{{3
     if self.verify_writes:
