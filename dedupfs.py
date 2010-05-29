@@ -220,7 +220,7 @@ class DedupFS(fuse.Fuse): # {{{1
       except OSError, e:
         if e.errno != errno.ENOENT: raise
         # Otherwise create a new file and open that.
-        inode, parent_inode = self.__insert(path, mode, 0)
+        inode, parent_ino = self.__insert(path, mode, 0)
         status = self.open(path, flags, nested=True, inode=inode)
       self.__commit_changes()
       self.__gc_hook()
@@ -343,8 +343,8 @@ class DedupFS(fuse.Fuse): # {{{1
     try:
       self.__log_call('mkdir', 'mkdir(%r, %o)', path, mode)
       if self.read_only: return -errno.EROFS
-      inode, parent_inode = self.__insert(path, mode | stat.S_IFDIR, 1024 * 4)
-      self.conn.execute('UPDATE inodes SET nlinks = nlinks + 1 WHERE inode = ?', (parent_inode,))
+      inode, parent_ino = self.__insert(path, mode | stat.S_IFDIR, 1024 * 4)
+      self.conn.execute('UPDATE inodes SET nlinks = nlinks + 1 WHERE inode = ?', (parent_ino,))
       self.__commit_changes()
       self.__gc_hook()
       return 0
@@ -506,7 +506,7 @@ class DedupFS(fuse.Fuse): # {{{1
       self.__log_call('symlink', 'symlink(%r -> %r)', link_path, target_path)
       if self.read_only: return -errno.EROFS
       # Create an inode to hold the symbolic link.
-      inode, parent_inode = self.__insert(link_path, self.link_mode, len(target_path))
+      inode, parent_ino = self.__insert(link_path, self.link_mode, len(target_path))
       # Save the symbolic link's target and size.
       self.conn.execute('INSERT INTO links (inode, target) VALUES (?, ?)', (inode, target_path))
       self.__commit_changes()
@@ -747,7 +747,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def __insert(self, path, mode, size, rdev=0): # {{{3
     parent, name = os.path.split(path)
-    parent_id, parent_inode = self.__path2keys(parent)
+    parent_id, parent_ino = self.__path2keys(parent)
     nlinks = mode & stat.S_IFDIR and 2 or 1
     t = self.__newctime()
     uid, gid = self.__getctx()
@@ -759,7 +759,7 @@ class DedupFS(fuse.Fuse): # {{{1
     self.conn.execute('INSERT INTO tree (parent_id, name, inode) VALUES (?, ?, ?)', (parent_id, string_id, inode))
     node_id = self.__fetchval('SELECT last_insert_rowid()')
     self.__cache_set(path, (node_id, inode))
-    return inode, parent_inode
+    return inode, parent_ino
 
   def __intern(self, string): # {{{3
     args = (sqlite3.Binary(string),)
