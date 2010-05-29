@@ -1007,38 +1007,35 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def __collect_garbage(self): # {{{3
     if self.gc_enabled and not self.read_only:
-
       start_time = time.time()
       self.logger.info("Performing garbage collection (this might take a while) ..")
-
-      sub_start_time = time.time()
-      self.conn.execute('DELETE FROM strings WHERE id NOT IN (SELECT name FROM tree)')
-      elapsed_time = time.time() - sub_start_time
-      if elapsed_time > 1:
-        self.logger.info("Cleaned up unused strings in %s.", format_timespan(elapsed_time))
-
-      sub_start_time = time.time()
-      self.conn.execute('DELETE FROM inodes WHERE nlinks = 0')
-      elapsed_time = time.time() - sub_start_time
-      if elapsed_time > 1:
-        self.logger.info("Cleaned up unused inodes in %s.", format_timespan(elapsed_time))
-
-      sub_start_time = time.time()
-      self.conn.execute('DELETE FROM "index" WHERE inode NOT IN (SELECT inode FROM inodes)')
-      elapsed_time = time.time() - sub_start_time
-      if elapsed_time > 1:
-        self.logger.info("Cleaned up unused index entries in %s.", format_timespan(elapsed_time))
-
-      sub_start_time = time.time()
-      for row in self.conn.execute('SELECT hash FROM hashes WHERE id NOT IN (SELECT hash_id FROM "index")'):
-        del self.blocks[row[0]]
-      self.conn.execute('DELETE FROM hashes WHERE id NOT IN (SELECT hash_id FROM "index")')
-      elapsed_time = time.time() - sub_start_time
-      if elapsed_time > 1:
-        self.logger.info("Cleaned up unused data blocks in %s.", format_timespan(time.time() - sub_start_time))
-
+      for method in self.__collect_strings, self.__collect_inodes, \
+          self.__collect_indices, self.__collect_blocks:
+        sub_start_time = time.time()
+        msg = method()
+        elapsed_time = time.time() - sub_start_time
+        if elapsed_time > 1:
+          self.logger.info(msg, format_timespan(elapsed_time))
       elapsed_time = time.time() - start_time
       self.logger.info("Finished garbage collection in %s.", format_timespan(elapsed_time))
+
+  def __collect_strings(self): # {{{4
+    self.conn.execute('DELETE FROM strings WHERE id NOT IN (SELECT name FROM tree)')
+    return "Cleaned up unused path segments in %s."
+
+  def __collect_inodes(self): # {{{4
+    self.conn.execute('DELETE FROM inodes WHERE nlinks = 0')
+    return "Cleaned up unused inodes in %s."
+
+  def __collect_indices(self): # {{{4
+    self.conn.execute('DELETE FROM "index" WHERE inode NOT IN (SELECT inode FROM inodes)')
+    return "Cleaned up unused indices in %s."
+
+  def __collect_blocks(self): # {{{4
+    for row in self.conn.execute('SELECT hash FROM hashes WHERE id NOT IN (SELECT hash_id FROM "index")'):
+      del self.blocks[row[0]]
+    self.conn.execute('DELETE FROM hashes WHERE id NOT IN (SELECT hash_id FROM "index")')
+    return "Cleaned up unused data blocks in %s."
 
   def __commit_changes(self, nested=False): # {{{3
     if self.use_transactions and not nested:
