@@ -180,7 +180,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def access(self, path, flags): # {{{3
     try:
-      #self.__log_call('access', 'access(%r, %o)', path, flags)
+      self.__log_call('access', 'access(%r, %o)', path, flags)
       inode = self.__path2keys(path)[1]
       if flags != os.F_OK and not self.__access(inode, flags):
         return -errno.EACCES
@@ -190,7 +190,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def chmod(self, path, mode): # {{{3
     try:
-      #self.__log_call('chmod', 'chmod(%r, %o)', path, mode)
+      self.__log_call('chmod', 'chmod(%r, %o)', path, mode)
       if self.read_only: return -errno.EROFS
       inode = self.__path2keys(path)[1]
       self.conn.execute('UPDATE inodes SET mode = ? WHERE inode = ?', (mode, inode))
@@ -201,7 +201,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def chown(self, path, uid, gid): # {{{3
     try:
-      #self.__log_call('chown', 'chown(%r, %i, %i)', path, uid, gid)
+      self.__log_call('chown', 'chown(%r, %i, %i)', path, uid, gid)
       if self.read_only: return -errno.EROFS
       inode = self.__path2keys(path)[1]
       self.conn.execute('UPDATE inodes SET uid = ?, gid = ? WHERE inode = ?', (uid, gid, inode))
@@ -212,7 +212,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def create(self, path, flags, mode): # {{{3
     try:
-      #self.__log_call('create', 'create(%r, %o, %o)', path, flags, mode)
+      self.__log_call('create', 'create(%r, %o, %o)', path, flags, mode)
       if self.read_only: return -errno.EROFS
       try:
         # If the file already exists, just open it.
@@ -231,7 +231,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def fsdestroy(self): # {{{3
     try:
-      #self.__log_call('fsdestroy', 'fsdestroy()')
+      self.__log_call('fsdestroy', 'fsdestroy()')
       self.logger.info("Committing outstanding changes to `%s'.", self.metastore_file)
       self.__collect_garbage()
       self.__print_stats()
@@ -258,7 +258,7 @@ class DedupFS(fuse.Fuse): # {{{1
       self.verify_writes = options.verify_writes
       # Initialize the logging and database subsystems.
       self.init_logging(options)
-      #self.__log_call('fsinit', 'fsinit()')
+      self.__log_call('fsinit', 'fsinit()')
       self.setup_database_connections()
       self.init_metastore()
       self.__get_opts_from_db(options)
@@ -288,7 +288,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def getattr(self, path): # {{{3
     try:
-      #self.__log_call('getattr', 'getattr(%r)', path)
+      self.__log_call('getattr', 'getattr(%r)', path)
       inode = self.__path2keys(path)[1]
       query = 'SELECT inode, nlinks, mode, uid, gid, rdev, size, atime, mtime, ctime FROM inodes WHERE inode = ?'
       attrs = self.conn.execute(query, (inode,)).fetchone()
@@ -305,10 +305,10 @@ class DedupFS(fuse.Fuse): # {{{1
                     st_blksize = self.block_size,
                     st_blocks  = attrs[6] / 512,
                     st_dev     = 0)
-      self.logger.debug("getattr() returning %s", result)
+      self.logger.debug("getattr(%r) returning %s", path, result)
       return result
     except Exception, e:
-      self.logger.debug("getattr() returning ENOENT")
+      self.logger.debug("getattr(%r) returning ENOENT", path)
       return self.__except_to_status('getattr', e, errno.ENOENT)
 
   def link(self, target_path, link_path, nested=False): # {{{3
@@ -319,7 +319,7 @@ class DedupFS(fuse.Fuse): # {{{1
     # with the same inode number (maybe because of internal caching based on
     # inode numbers?).
     try:
-      #self.__log_call('link', '%slink(%r -> %r)', nested and ' ' or '', target_path, link_path)
+      self.__log_call('link', '%slink(%r -> %r)', nested and ' ' or '', target_path, link_path)
       if self.read_only: return -errno.EROFS
       target_ino = self.__path2keys(target_path)[1]
       link_parent, link_name = os.path.split(link_path)
@@ -338,7 +338,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def mkdir(self, path, mode): # {{{3
     try:
-      #self.__log_call('mkdir', 'mkdir(%r, %o)', path, mode)
+      self.__log_call('mkdir', 'mkdir(%r, %o)', path, mode)
       if self.read_only: return -errno.EROFS
       inode, parent_inode = self.__insert(path, mode | stat.S_IFDIR, 1024 * 4)
       self.conn.execute('UPDATE inodes SET nlinks = nlinks + 1 WHERE inode = ?', (parent_inode,))
@@ -351,7 +351,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def mknod(self, path, mode, rdev): # {{{3
     try:
-      #self.__log_call('mknod', 'mknod(%r, %o)', path, mode)
+      self.__log_call('mknod', 'mknod(%r, %o)', path, mode)
       if self.read_only: return -errno.EROFS
       self.__insert(path, mode, 0, rdev)
       self.__commit_changes()
@@ -363,7 +363,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def open(self, path, flags, nested=None, inode=None): # {{{3
     try:
-      #self.__log_call('open', 'open(%r, %o)', path, flags)
+      self.__log_call('open', 'open(%r, %o)', path, flags)
       # Make sure the file exists?
       inode = inode or self.__path2keys(path)[1]
       # Make sure the file is readable and/or writable.
@@ -379,7 +379,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def read(self, path, length, offset): # {{{3
     try:
-      #self.__log_call('read', 'read(%r, %i, %i)', path, length, offset)
+      self.__log_call('read', 'read(%r, %i, %i)', path, length, offset)
       start_time = time.time()
       buf = self.__get_file_buffer(path)
       buf.seek(offset)
@@ -394,7 +394,7 @@ class DedupFS(fuse.Fuse): # {{{1
     # Bug fix: When you use the -o use_ino option, directory entries must have
     # an "ino" field, otherwise not a single directory entry will be listed!
     try:
-      #self.__log_call('readdir', 'readdir(%r, %i)', path, offset)
+      self.__log_call('readdir', 'readdir(%r, %i)', path, offset)
       node_id, inode = self.__path2keys(path)
       yield fuse.Direntry('.', ino=inode)
       yield fuse.Direntry('..')
@@ -408,7 +408,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def readlink(self, path): # {{{3
     try:
-      #self.__log_call('readlink', 'readlink(%r)', path)
+      self.__log_call('readlink', 'readlink(%r)', path)
       inode = self.__path2keys(path)[1]
       query = 'SELECT target FROM links WHERE inode = ?'
       return self.__fetchval(query, inode)
@@ -417,7 +417,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def release(self, path, flags): # {{{3
     try:
-      #self.__log_call('release', 'release(%r, %o)', path, flags)
+      self.__log_call('release', 'release(%r, %o)', path, flags)
       # Flush the write buffer?!
       if path in self.buffers:
         buf = self.buffers[path]
@@ -450,7 +450,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def rename(self, old_path, new_path): # {{{3
     try:
-      #self.__log_call('rename', 'rename(%r -> %r)', old_path, new_path)
+      self.__log_call('rename', 'rename(%r -> %r)', old_path, new_path)
       if self.read_only: return -errno.EROFS
       # Try to remove the existing target path (if if exists).
       try:
@@ -471,7 +471,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def rmdir(self, path): # {{{3
     try:
-      #self.__log_call('rmdir', 'rmdir(%r)', path)
+      self.__log_call('rmdir', 'rmdir(%r)', path)
       if self.read_only: return -errno.EROFS
       self.__remove(path, check_empty=True)
       parent_id, parent_inode = self.__path2keys(os.path.split(path)[0])
@@ -484,7 +484,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def statfs(self): # {{{3
     try:
-      #self.__log_call('statfs', 'statfs()')
+      self.__log_call('statfs', 'statfs()')
       # Use os.statvfs() to report the host file system's storage capacity.
       host_fs = os.statvfs(self.metastore_file)
       return StatVFS(f_bavail  = (host_fs.f_bsize * host_fs.f_bavail) / self.block_size, # The total number of free blocks available to a non-privileged process.
@@ -503,7 +503,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def symlink(self, target_path, link_path): # {{{3
     try:
-      #self.__log_call('symlink', 'symlink(%r -> %r)', link_path, target_path)
+      self.__log_call('symlink', 'symlink(%r -> %r)', link_path, target_path)
       if self.read_only: return -errno.EROFS
       # Create an inode to hold the symbolic link.
       inode, parent_inode = self.__insert(link_path, self.link_mode, len(target_path))
@@ -518,7 +518,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def truncate(self, path, size): # {{{3
     try:
-      #self.__log_call('truncate', 'truncate(%r, %i)', path, size)
+      self.__log_call('truncate', 'truncate(%r, %i)', path, size)
       if self.read_only: return -errno.EROFS
       inode = self.__path2keys(path)[1]
       last_block = size / self.block_size
@@ -533,7 +533,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def unlink(self, path, nested=False): # {{{3
     try:
-      #self.__log_call('unlink', '%sunlink(%r)', nested and ' ' or '', path)
+      self.__log_call('unlink', '%sunlink(%r)', nested and ' ' or '', path)
       if self.read_only: return -errno.EROFS
       self.__remove(path)
       self.__commit_changes(nested)
@@ -544,7 +544,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def utime(self, path, times): # {{{3
     try:
-      #self.__log_call('utime', 'utime(%r, %i, %i)', path, *times)
+      self.__log_call('utime', 'utime(%r, %i, %i)', path, *times)
       if self.read_only: return -errno.EROFS
       inode = self.__path2keys(path)[1]
       atime, mtime = times
@@ -556,7 +556,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def utimens(self, path, ts_acc, ts_mod): # {{{3
     try:
-      #self.__log_call('utimens', 'utimens(%r, %i.%i, %i.%i)', path, ts_acc.tv_sec, ts_acc.tv_nsec, ts_mod.tv_sec, ts_mod.tv_nsec)
+      self.__log_call('utimens', 'utimens(%r, %i.%i, %i.%i)', path, ts_acc.tv_sec, ts_acc.tv_nsec, ts_mod.tv_sec, ts_mod.tv_nsec)
       if self.read_only: return -errno.EROFS
       inode = self.__path2keys(path)[1]
       atime = ts_acc.tv_sec + (ts_acc.tv_nsec / 1000000.0)
@@ -570,7 +570,7 @@ class DedupFS(fuse.Fuse): # {{{1
   def write(self, path, data, offset): # {{{3
     try:
       length = len(data)
-      #self.__log_call('write', 'write(%r, %i, %i)', path, offset, length)
+      self.__log_call('write', 'write(%r, %i, %i)', path, offset, length)
       start_time = time.time()
       buf = self.__get_file_buffer(path)
       buf.seek(offset)
