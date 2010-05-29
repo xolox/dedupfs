@@ -787,7 +787,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def __verify_write(self, block, digest, block_nr, inode): # {{{3
     if self.verify_writes:
-      saved_value = self.decompress(str(self.__fetchval('SELECT value FROM blocks WHERE hash = ?', digest)))
+      saved_value = self.decompress(self.blocks[digest])
       if saved_value != block:
         # The data block was corrupted when it was written or read.
         dumpfile_corruption = '/tmp/dedupfs-corruption-%i' % time.time()
