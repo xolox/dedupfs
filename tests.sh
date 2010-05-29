@@ -10,18 +10,53 @@ TESTNO=1
 
 # Initialization. {{{1
 
+FAIL () {
+  FAIL_INTERNAL "$@"
+  CLEANUP
+  exit 1
+}
+
+MESSAGE () {
+  tput bold
+  echo "$@" >&2
+  tput sgr0
+}
+
+FAIL_INTERNAL () {
+  echo -ne '\033[31m' >&2
+  MESSAGE "$@"
+  echo -ne '\033[0m' >&2
+}
+
+CLEANUP () {
+
+  sleep $WAITTIME
+
+  if ! fusermount -u "$MOUNTPOINT"; then
+    FAIL_INTERNAL "$0:$LINENO: Failed to unmount the mount point?!"
+  fi
+
+  sleep $WAITTIME
+
+  if ! rm -R "$ROOTDIR"; then
+    FAIL_INTERNAL "$0:$LINENO: Failed to delete temporary directory!"
+  fi
+
+}
+
 # Create the root and mount directories.
 mkdir -p "$MOUNTPOINT"
 if [ ! -d "$MOUNTPOINT" ]; then
-  echo "$0:$LINENO: Failed to create mount directory $MOUNTPOINT!" >&2
+  FAIL "$0:$LINENO: Failed to create mount directory $MOUNTPOINT!"
   exit 1
 fi
 
 # Mount the file system using the two temporary databases.
-if [ "$1" = "-d" ]; then # -d == debug
-  python dedupfs.py -fvv "--metastore=$METASTORE" "--datastore=$DATASTORE" "$MOUNTPOINT" &
+OPTS="--verify-writes --compress=lzo --metastore=$METASTORE --datastore=$DATASTORE"
+if [ "$1" = "-d" ]; then
+  python dedupfs.py -fvv $OPTS "$MOUNTPOINT" &
 else
-  python dedupfs.py "--metastore=$METASTORE" "--datastore=$DATASTORE" "$MOUNTPOINT"
+  python dedupfs.py $OPTS "$MOUNTPOINT"
 fi
 
 # Wait a while before accessing the mount point, to
@@ -32,13 +67,11 @@ sleep $WAITTIME
 
 CHECK_NLINK () {
   NLINK=`ls -ld "$1" | awk '{print $2}'`
-  [ $NLINK -eq $2 ] || echo "$0:$3: Expected link count of $1 to be $2, got $NLINK!" >&2
+  [ $NLINK -eq $2 ] || FAIL "$0:$3: Expected link count of $1 to be $2, got $NLINK!"
 }
 
 FEEDBACK () {
-  tput bold
-  echo "Running test $1"
-  tput sgr0
+  MESSAGE "Running test $1"
 }
 
 # Check link count of file system root. {{{2
@@ -78,7 +111,7 @@ TESTNO=$[$TESTNO + 1]
 SUBDIR="$MOUNTPOINT/dir1"
 mkdir "$SUBDIR"
 if [ ! -d "$SUBDIR" ]; then
-  echo "$0:$LINENO: Failed to create subdirectory $SUBDIR!" >&2
+  FAIL "$0:$LINENO: Failed to create subdirectory $SUBDIR!"
 fi
 
 CHECK_NLINK "$SUBDIR" 2 $LINENO
@@ -97,11 +130,10 @@ TESTNO=$[$TESTNO + 1]
 
 SUBFILE="$SUBDIR/file"
 touch "$SUBFILE"
-rmdir "$SUBDIR" 2>/dev/null
-if [ ! -d "$SUBDIR" ]; then
-  echo "$0:$LINENO: rmdir() didn't fail when deleting a non-empty directory!" >&2
-else
-  rm -R "$SUBDIR"
+if rmdir "$SUBDIR" 2>/dev/null; then
+  FAIL "$0:$LINENO: rmdir() didn't fail when deleting a non-empty directory!"
+elif ! rm -R "$SUBDIR"; then
+  FAIL "$0:$LINENO: Failed to recursively delete directory?!"
 fi
 
 # Check that link count of root is decremented by one (because of subdirectory deleted above). {{{2
@@ -129,17 +161,17 @@ CHECK_NLINK "$REPLDIR" 3 $LINENO
 TESTDATA="$ROOTDIR/testdata"
 
 WRITE_TESTNO=0
-while [ $WRITE_TESTNO -le 10 ]; do
+while [ $WRITE_TESTNO -le 5 ]; do
   FEEDBACK $TESTNO
   TESTNO=$[$TESTNO + 1]
 
-  NBYTES=$[$RANDOM % (1024 * 1024)]
+  NBYTES=$[$RANDOM % (1024 * 512)]
   head -c $NBYTES /dev/urandom > "$TESTDATA"
   WRITE_FILE="$MOUNTPOINT/$RANDOM"
   cp -a "$TESTDATA" "$WRITE_FILE"
   sleep $WAITTIME
   if ! cmp -s "$TESTDATA" "$WRITE_FILE"; then
-    echo "Failed to verify $WRITE_FILE of $NBYTES bytes!" >&2
+    FAIL "Failed to verify $WRITE_FILE of $NBYTES bytes!"
     echo "Differences:"
     ls -l "$TESTDATA" "$WRITE_FILE"
     cmp -lb "$TESTDATA" "$WRITE_FILE"
@@ -152,20 +184,7 @@ done
 
 # Cleanup. {{{1
 
-sleep $WAITTIME
-
-if ! fusermount -u "$MOUNTPOINT"; then
-  echo "$0:$LINENO: Failed to unmount the mount point?!" >&2
-fi
-
-sleep $WAITTIME
-
-if ! rmdir "$MOUNTPOINT"; then
-  echo "$0:$LINENO: Failed to delete temporary mount point directory!" >&2
-fi
-
-if ! rm "$METASTORE" "$DATASTORE"; then
-  echo "$0:$LINENO: Failed to delete datafiles!" >&2
-fi
+CLEANUP
+MESSAGE "All tests passed!"
 
 # vim: ts=2 sw=2 et
