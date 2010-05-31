@@ -1,7 +1,7 @@
-The Python script dedupfs.py implements a file system in user-space using FUSE.
-It's called DedupFS because the file system's primary feature is deduplication,
-which enables it to store virtually unlimited copies of files because data is
-only stored once.
+The Python script `dedupfs.py` implements a file system in user-space using
+FUSE. It's called DedupFS because the file system's primary feature is
+deduplication, which enables it to store virtually unlimited copies of files
+because data is only stored once.
 
 In addition to deduplication the file system also supports transparent
 compression using any of the compression methods lzo, zlib and bz2.
@@ -10,6 +10,11 @@ These two properties make the file system ideal for backups: The author
 currently stores 230 GB worth of backups in two databases of 2,5 GB each.
 
 The design of DedupFS was inspired by Venti and ZFS.
+
+**Warning:** *The latest commits have introduced a hard to track bug that's
+probably related to string interning. After spending two days tracking down the
+bug I've suspended my efforts until I can find more time :-(. Obviously I don't
+suggest using the file system until I've fixed the bug!*
 
  USAGE
 =======
