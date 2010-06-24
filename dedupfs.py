@@ -11,11 +11,12 @@ is only stored once.
 In addition to deduplication the file system also supports transparent
 compression using any of the compression methods lzo, zlib and bz2.
 
-These two properties make the file system ideal for backups: The author
-currently stores 250 GB worth of backups using only 8 GB of disk space.
+These two properties make the file system ideal for backups: I'm currently
+storing 250 GB worth of backups using only 8 GB of disk space.
+
+The latest version is available on http://peterodding.com/code/dedupfs/
 
 DedupFS is licensed under the MIT license.
-
 Copyright 2010 Peter Odding <peter@peterodding.com>.
 """
 
@@ -590,7 +591,7 @@ class DedupFS(fuse.Fuse): # {{{1
     except Exception, e:
       return self.__except_to_status('write', e, errno.EIO)
 
-  # Miscellaneous methods: # {{{2
+  # Miscellaneous methods: {{{2
 
   def __init_logging(self, options): # {{{3
     # Configure logging of messages to a file.
