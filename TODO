@@ -9,17 +9,17 @@ Here are some things on my to-do list, in no particular order:
    else:
     flush user & meta data (file contents & attributes)
 
- * Implement rename() independently of [un]link() to improve performance?
+ * Implement rename() independently of link()/unlink() to improve performance?
 
- * Implement --verify-reads option that recalculates hashes when reading to
+ * Implement `--verify-reads` option that recalculates hashes when reading to
    check for data block corruption?
 
- * report_disk_usage() has become way too expensive for regular status
+ * `report_disk_usage()` has become way too expensive for regular status
    reports because it takes more than a minute on a 7.0 GB database. The only
    way it might work was if the statistics are only retrieved from the database
    once and from then on kept up to date inside Python, but that seems like an
-   awful lot of work. For now I've just removed the call to report_disk_usage()
-   from print_stats() and added a --print-stats command-line option that just
+   awful lot of work. For now I've removed the call to `report_disk_usage()`
+   from `print_stats()` and added a `--print-stats` command-line option that
    reports the disk usage and then exits.
 
  * Tag databases with a version number and implement automatic upgrades because
@@ -28,3 +28,9 @@ Here are some things on my to-do list, in no particular order:
  * Change the project name because `DedupFS` is already used by at least two
    other projects? One is a distributed file system which shouldn't cause too
    much confusion, but the other is a deduplicating file system as well :-\
+
+ * Support directory hard links without upsetting FUSE and add a command-line
+   option that instructs `dedupfs.py` to search for identical subdirectories
+   and replace them with directory hard links.
+
+ * Support files that don't fit in RAM (virtual machine disk images…)

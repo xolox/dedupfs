@@ -1,3 +1,5 @@
+# DedupFS: A deduplicating FUSE file system written in Python
+
 The Python script `dedupfs.py` implements a file system in user-space using
 FUSE. It's called DedupFS because the file system's primary feature is
 deduplication, which enables it to store virtually unlimited copies of files
@@ -7,17 +9,11 @@ In addition to deduplication the file system also supports transparent
 compression using any of the compression methods lzo, zlib and bz2.
 
 These two properties make the file system ideal for backups: The author
-currently stores 230 GB worth of backups in two databases of 2,5 GB each.
+currently stores 250 GB worth of backups using only 8 GB of disk space.
 
 The design of DedupFS was inspired by Venti and ZFS.
 
-**Warning:** *The latest commits have introduced a hard to track bug that's
-probably related to string interning. After spending two days tracking down the
-bug I've suspended my efforts until I can find more time :-(. Obviously I don't
-suggest using the file system until I've fixed the bug!*
-
- USAGE
-=======
+## Usage
 
 To use this script on Ubuntu (where it was developed) try the following:
 
@@ -31,8 +27,7 @@ To use this script on Ubuntu (where it was developed) try the following:
     #  - ~/.dedupfs-metastore.sqlite3 contains the tree and meta data
     #  - ~/.dedupfs-datastore.db contains the (compressed) data blocks
 
- STATUS
-========
+## Status
 
 Development on DedupFS began as a proof-of-concept to find out how much disk
 space the author could free by employing deduplication to store his daily
@@ -45,25 +40,21 @@ prove the correctness of the code (the tests are being worked on).
 
 The file system initially stored everything in a single SQLite database, but it
 turned out that after the database grew beyond 8 GB the write speed would drop
-from 8-12 MB/s to 2-3 MB/s. Therefor the file system now uses a second database
-to store the data blocks. Berkeley DB is used for this database because it's
-meant to be used as a key/value store and doesn't require escaping binary data.
+from 8-12 MB/s to 2-3 MB/s. Therefor the file system now stores its data blocks
+in a separate database, which is a persistent key/value store managed by dbm.
 
- DEPENDENCIES
-==============
+## Dependencies
 
 This script requires the Python FUSE binding in addition to several Python
-standard libraries like `dbm`, `sqlite3`, `hashlib` and `cStringIO`.
+standard libraries like `anydbm`, `sqlite3`, `hashlib` and `cStringIO`.
 
- CONTACT
-=========
+## Contact
 
 If you have questions, bug reports, suggestions, etc. the author can be
 contacted at <peter@peterodding.com>. The latest version of DedupFS is
 available at <http://peterodding.com/code/dedupfs> and <http://github.com/xolox/dedupfs>.
 
- LICENSE
-=========
+## License
 
-DedupFS is licensed under the MIT license.
-Copyright 2010 Peter Odding <peter@peterodding.com>.
+This software is licensed under the MIT license.  
+© 2010 Peter Odding &lt;<peter@peterodding.com>&gt;.
