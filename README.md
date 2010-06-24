@@ -1,12 +1,8 @@
 # DedupFS: A deduplicating FUSE file system written in Python
 
-The Python script [dedupfs.py](http://github.com/xolox/dedupfs/blob/master/dedupfs.py) implements a file system in user-space using [FUSE](http://en.wikipedia.org/wiki/Filesystem_in_Userspace). It's called DedupFS because the file system's primary feature is [deduplication](http://en.wikipedia.org/wiki/Data_deduplication), which enables it to store virtually unlimited copies of files because data is only stored once.
+The Python script [dedupfs.py](http://github.com/xolox/dedupfs/blob/master/dedupfs.py) implements a file system in user-space using [FUSE](http://en.wikipedia.org/wiki/Filesystem_in_Userspace). It's called DedupFS because the file system's primary feature is [data deduplication](http://en.wikipedia.org/wiki/Data_deduplication), which enables it to store virtually unlimited copies of files because unchanged data is only stored once. In addition to deduplication the file system also supports transparent compression using the compression methods [lzo](http://en.wikipedia.org/wiki/LZO), [zlib](http://en.wikipedia.org/wiki/zlib) and [bz2](http://en.wikipedia.org/wiki/bz2). These properties make the file system ideal for backups: I'm currently storing 250 GB worth of backups using only 8 GB of disk space.
 
-In addition to deduplication the file system also supports transparent compression using any of the compression methods [lzo](http://en.wikipedia.org/wiki/LZO), [zlib](http://en.wikipedia.org/wiki/zlib) and [bz2](http://en.wikipedia.org/wiki/bz2).
-
-These two properties make the file system ideal for backups: I'm currently storing 250 GB worth of backups using only 8 GB of disk space.
-
-Several aspects of the design of DedupFS were inspired by [Venti](http://en.wikipedia.org/wiki/Venti) and [ZFS](http://en.wikipedia.org/wiki/ZFS) (though I've never personally used either).
+Several aspects of the design of DedupFS were inspired by [Venti](http://en.wikipedia.org/wiki/Venti) (ignoring the distributed aspect, for now…) and [ZFS](http://en.wikipedia.org/wiki/ZFS), though I've never personally used either. The [ArchiveFS](http://code.google.com/p/archivefs/) and [lessfs](http://www.lessfs.com/) projects share similar goals but have very different implementations.
 
 ## Usage
 
