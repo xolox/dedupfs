@@ -3,7 +3,7 @@
 # Documentation. {{{1
 
 """
-This Python script implements a file system in user-space using FUSE. It's
+This Python script implements a file system in user space using FUSE. It's
 called DedupFS because the file system's primary feature is deduplication,
 which enables it to store virtually unlimited copies of files because data
 is only stored once.
@@ -14,7 +14,7 @@ compression using any of the compression methods lzo, zlib and bz2.
 These two properties make the file system ideal for backups: I'm currently
 storing 250 GB worth of backups using only 8 GB of disk space.
 
-The latest version is available on http://peterodding.com/code/dedupfs/
+The latest version is available at http://peterodding.com/code/dedupfs/
 
 DedupFS is licensed under the MIT license.
 Copyright 2010 Peter Odding <peter@peterodding.com>.
@@ -22,25 +22,34 @@ Copyright 2010 Peter Odding <peter@peterodding.com>.
 
 # Imports. {{{1
 
-# Standard libraries.
-import collections
-import cStringIO
-import errno
-import hashlib
-import logging
-import math
-import os
-import sqlite3
-import stat
+# Check the Python version, warn the user if untested.
 import sys
-import time
-import traceback
+if sys.version_info[:2] != (2, 6):
+  msg = "Warning: DedupFS has only been tested on Python 2.6, while you're running Python %d.%d!\n"
+  sys.stderr.write(msg % (sys.version_info[0], sys.version_info[1]))
 
-# The Python FUSE binding.
+# Try to load the required modules from Python's standard library.
+try:
+  import cStringIO
+  import errno
+  import hashlib
+  import logging
+  import math
+  import os
+  import sqlite3
+  import stat
+  import time
+  import traceback
+except ImportError, e:
+  msg = "Error: Failed to load one of the required Python modules! (%s)\n"
+  sys.stderr.write(msg % str(e))
+  sys.exit(1)
+
+# Try to load the Python FUSE binding.
 try:
   import fuse
 except ImportError:
-  sys.stderr.write("Fatal error: The Python FUSE binding isn't installed!\n" + \
+  sys.stderr.write("Error: The Python FUSE binding isn't installed!\n" + \
       "If you're on Ubuntu try running `sudo apt-get install python-fuse'.\n")
   sys.exit(1)
 
@@ -51,12 +60,12 @@ from get_memory_usage import get_memory_usage
 def main(): # {{{1
   """
   This function enables using dedupfs.py as a shell script that creates FUSE
-  mount points. Execute "dedupfs -h" for a list of valid command-line options.
+  mount points. Execute "dedupfs -h" for a list of valid command line options.
   """
 
   dfs = DedupFS()
 
-  # A short usage message with the command-line options defined by dedupfs
+  # A short usage message with the command line options defined by dedupfs
   # itself (see the __init__() method of the DedupFS class) is automatically
   # printed by the following call when sys.argv contains -h or --help.
   fuse_opts = dfs.parse(['-o', 'use_ino,default_permissions,fsname=dedupfs'] + sys.argv[1:])
@@ -103,7 +112,7 @@ class DedupFS(fuse.Fuse): # {{{1
       self.bytes_written = 0
       self.cache_gc_last_run = time.time()
       self.cache_requests = 0
-      self.cache_timeout = 60 # TODO Make this a command-line option!
+      self.cache_timeout = 60 # TODO Make this a command line option!
       self.cached_nodes = {}
       self.calls_log_filter = []
       self.datastore_file = '~/.dedupfs-datastore.db'
@@ -133,10 +142,10 @@ class DedupFS(fuse.Fuse): # {{{1
       self.logger.setLevel(logging.INFO)
       self.logger.addHandler(logging.StreamHandler(sys.stderr))
 
-      # Register some custom command-line options with the option parser.
+      # Register some custom command line options with the option parser.
       option_stored_in_db = " (this option is only useful when creating a new database, because your choice is stored in the database and can't be changed after that)"
       self.parser.set_conflict_handler('resolve') # enable overriding the --help message.
-      self.parser.add_option('-h', '--help', action='help', help="show this help message followed by the command-line options defined by the Python FUSE binding and exit")
+      self.parser.add_option('-h', '--help', action='help', help="show this help message followed by the command line options defined by the Python FUSE binding and exit")
       self.parser.add_option('-v', '--verbose', action='count', dest='verbosity', default=0, help="increase verbosity")
       self.parser.add_option('--print-stats', dest='print_stats', action='store_true', default=False, help="print the total apparent size and the actual disk usage of the file system and exit")
       self.parser.add_option('--log-file', dest='log_file', help="specify log file location")
@@ -254,7 +263,7 @@ class DedupFS(fuse.Fuse): # {{{1
 
   def fsinit(self, silent=False): # {{{3
     try:
-      # Process the custom command-line options defined in __init__().
+      # Process the custom command line options defined in __init__().
       options = self.cmdline[0]
       self.block_size = options.block_size
       self.compression_method = options.compression_method
@@ -468,7 +477,7 @@ class DedupFS(fuse.Fuse): # {{{1
       try:
         self.__remove(new_path, check_empty=True)
       except OSError, e:
-        # Ignore errno.ENOENT, re-raise other exceptions.
+        # Ignore errno.ENOENT, re raise other exceptions.
         if e.errno != errno.ENOENT: raise
       # Link the new path to the same inode as the old path.
       self.link(old_path, new_path, nested=True)
@@ -497,11 +506,11 @@ class DedupFS(fuse.Fuse): # {{{1
       self.__log_call('statfs', 'statfs()')
       # Use os.statvfs() to report the host file system's storage capacity.
       host_fs = os.statvfs(self.metastore_file)
-      return StatVFS(f_bavail  = (host_fs.f_bsize * host_fs.f_bavail) / self.block_size, # The total number of free blocks available to a non-privileged process.
+      return StatVFS(f_bavail  = (host_fs.f_bsize * host_fs.f_bavail) / self.block_size, # The total number of free blocks available to a non privileged process.
                      f_bfree   = (host_fs.f_frsize * host_fs.f_bfree) / self.block_size, # The total number of free blocks in the file system.
                      f_blocks  = (host_fs.f_frsize * host_fs.f_blocks) / self.block_size, # The total number of blocks in the file system in terms of f_frsize.
                      f_bsize   = self.block_size, # The file system block size in bytes.
-                     f_favail  = 0, # The number of free file serial numbers available to a non-privileged process.
+                     f_favail  = 0, # The number of free file serial numbers available to a non privileged process.
                      f_ffree   = 0, # The total number of free file serial numbers.
                      f_files   = 0, # The total number of file serial numbers.
                      f_flag    = 0, # File system flags. Symbols are defined in the <sys/statvfs.h> header file to refer to bits in this field (see The f_flags field).
@@ -630,7 +639,7 @@ class DedupFS(fuse.Fuse): # {{{1
       INSERT OR IGNORE INTO tree (id, parent_id, name, inode) VALUES (1, NULL, 1, 1);
       INSERT OR IGNORE INTO inodes (nlinks, mode, uid, gid, rdev, size, atime, mtime, ctime) VALUES (2, %i, %i, %i, 0, 1024*4, %f, %f, %f);
 
-      -- Save the command-line options used to initialize the database?
+      -- Save the command line options used to initialize the database?
       INSERT OR IGNORE INTO options (name, value) VALUES ('synchronous', %i);
       INSERT OR IGNORE INTO options (name, value) VALUES ('block_size', %i);
       INSERT OR IGNORE INTO options (name, value) VALUES ('compression_method', %r);
@@ -651,7 +660,7 @@ class DedupFS(fuse.Fuse): # {{{1
       self.blocks = self.__open_datastore(created_by_gdbm)
     # Open an SQLite database connection with manual transaction management.
     self.conn = sqlite3.connect(self.metastore_file, isolation_level=None)
-    # Use the built-in row factory to enable named attributes.
+    # Use the built in row factory to enable named attributes.
     self.conn.row_factory = sqlite3.Row
     # Return regular strings instead of Unicode objects.
     self.conn.text_factory = str
@@ -694,14 +703,14 @@ class DedupFS(fuse.Fuse): # {{{1
       # created by root but is currently being accessed by another user).
       if not os.access(pathname, os.W_OK):
         if not silent:
-          self.logger.warning("File %r exists but isn't writable! Switching to read-only mode.", pathname)
+          self.logger.warning("File %r exists but isn't writable! Switching to read only mode.", pathname)
         self.read_only = True
     return pathname
 
   def __log_call(self, fun, msg, *args): # {{{3
     # To disable all __log_call() invocations:
     #  :%s/^\(\s\+\)\(self\.__log_call\)/\1#\2
-    # To re-enable them:
+    # To re enable them:
     #  :%s/^\(\s\+\)#\(self\.__log_call\)/\1\2
     if self.calls_log_filter == [] or fun in self.calls_log_filter:
       self.logger.debug(msg, *args)
@@ -734,7 +743,7 @@ class DedupFS(fuse.Fuse): # {{{1
       if not silent:
         self.logger.debug("Using the %s compression method.", selected_format)
       # My custom LZO binding defines set_block_size() which enables
-      # optimizations like pre-allocating a buffer that can be reused for
+      # optimizations like preallocating a buffer that can be reused for
       # every call to compress() and decompress().
       if selected_format == 'lzo':
         module = __import__('lzo')
@@ -842,7 +851,7 @@ class DedupFS(fuse.Fuse): # {{{1
         os._exit(1)
 
   def __access(self, inode, flags): # {{{3
-    # Check if the flags include writing while the database is read-only.
+    # Check if the flags include writing while the database is read only.
     if self.read_only and flags & os.W_OK:
       return False
     # Get the path's mode, owner and group through the inode.
@@ -1028,7 +1037,7 @@ class DedupFS(fuse.Fuse): # {{{1
       printed_header = False
       for row in self.conn.execute(query):
         if not printed_header:
-          self.logger.debug("A listing of the most-used blocks follows:")
+          self.logger.debug("A listing of the most used blocks follows:")
           printed_header = True
         msg = "Block #%s of %s has been used %i times: %r"
         preview = row['value']
@@ -1182,12 +1191,21 @@ class Buffer: # {{{1
 
 # Named tuples used to return complex objects to FUSE. {{{1
 
-Stat = collections.namedtuple('Stat', 'st_atime st_blksize st_blocks \
-    st_ctime st_dev st_gid st_ino st_mode st_mtime st_nlink st_rdev \
-    st_size st_uid')
-
-StatVFS = collections.namedtuple('StatVFS', 'f_bavail f_bfree f_blocks \
-    f_bsize f_favail f_ffree f_files f_flag f_frsize f_namemax')
+try:
+  import collections
+  Stat = collections.namedtuple('Stat', 'st_atime st_blksize st_blocks \
+      st_ctime st_dev st_gid st_ino st_mode st_mtime st_nlink st_rdev \
+      st_size st_uid')
+  StatVFS = collections.namedtuple('StatVFS', 'f_bavail f_bfree f_blocks \
+      f_bsize f_favail f_ffree f_files f_flag f_frsize f_namemax')
+except ImportError:
+  # Fall back to regular Python classes instead of named tuples.
+  class __Struct:
+    def __init__(self, **kw):
+      for k, v in kw.iteritems():
+        setattr(self, k, v)
+  class Stat(__Struct): pass
+  class StatVFS(__Struct): pass
 
 # }}}1
 
